@@ -1,12 +1,13 @@
+import os
 import pandas as pd
 import matplotlib.pyplot as plt
 
-# ===== LOAD DATA =====
-df = pd.read_csv('equity_curve.csv')
+# ===== PATH FIX =====
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+CSV_PATH = os.path.join(BASE_DIR, 'equity_curve.csv')
 
-# ===== BASIC CHECK =====
-if 'equity' not in df.columns:
-    raise ValueError('CSV must contain "equity" column')
+# ===== LOAD DATA =====
+df = pd.read_csv(CSV_PATH)
 
 # ===== METRICS =====
 start_equity = df['equity'].iloc[0]
@@ -19,12 +20,12 @@ max_dd = drawdown.max() * 100
 
 # ===== PLOT =====
 plt.figure(figsize=(12, 6))
-plt.plot(df['equity'], label='Equity Curve')
+plt.plot(df['equity'], label='Equity Curve', linewidth=2)
 plt.fill_between(
     df.index,
     df['equity'],
     rolling_max,
-    alpha=0.15,
+    alpha=0.2,
     label='Drawdown'
 )
 
@@ -33,8 +34,7 @@ plt.title(
 )
 plt.xlabel('Step')
 plt.ylabel('Equity')
-plt.legend()
 plt.grid(True)
-
+plt.legend()
 plt.tight_layout()
 plt.show()

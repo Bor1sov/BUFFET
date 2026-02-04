@@ -10,10 +10,8 @@ const FIGI = process.env.FIGI;
 const WINDOW_SIZE = 60;
 const DAYS = 30;
 
-
 const BUY_PROB = 0.55;
 const SELL_PROB = 0.48;
-
 
 const START_BALANCE = 100000;
 
@@ -22,16 +20,15 @@ const START_BALANCE = 100000;
 async function backtest() {
   console.log('📊 BACKTEST DIRECTIONAL MODEL\n');
 
-
   const candles = await getCandles(FIGI, DAYS);
   const prices = candles.map(c => c.close);
 
   if (prices.length < WINDOW_SIZE + 10) {
-    console.log('❌ Недостаточно данных для backtest');
+    console.log('❌ Недостаточно данных');
     return;
   }
 
-  /* ===== SCALE ===== */
+  /* ===== NORMALIZE ===== */
 
   const min = Math.min(...prices);
   const max = Math.max(...prices);
@@ -39,8 +36,9 @@ async function backtest() {
 
   /* ===== TRAIN ===== */
 
-  console.log('🧠 Обучение модели...');
+  console.log('🧠 Начало обучения (UP/DOWN)...');
   const model = await trainModel(normPrices, WINDOW_SIZE);
+  console.log('Обучение завершено');
 
   /* ===== STATE ===== */
 
@@ -61,16 +59,18 @@ async function backtest() {
   /* ===== SIMULATION ===== */
 
   for (let i = WINDOW_SIZE; i < prices.length - 1; i++) {
-    if (i % 100 === 0) {
-  console.log(`P(UP)=${(probUp * 100).toFixed(1)}%`);
-}
-
     const price = prices[i];
     const recent = normPrices.slice(i - WINDOW_SIZE, i);
+
+    // ✅ ВСЕГДА СНАЧАЛА
     const probUp = await predict(model, recent);
 
-    /* ===== EXIT ===== */
+    // Диагностика распределения
+    if (i % 100 === 0) {
+      console.log(`P(UP)=${(probUp * 100).toFixed(1)}%`);
+    }
 
+    /* ===== EXIT ===== */
     if (inPosition && probUp < SELL_PROB) {
       const pnl = price / entryPrice - 1;
       equity *= 1 + pnl;
@@ -80,7 +80,7 @@ async function backtest() {
 
       tradeLog.push({
         type: 'SELL',
-        price,
+        price: price.toFixed(2),
         pnl: (pnl * 100).toFixed(2)
       });
 
@@ -88,20 +88,18 @@ async function backtest() {
     }
 
     /* ===== ENTRY ===== */
-
     if (!inPosition && probUp > BUY_PROB) {
       entryPrice = price;
       inPosition = true;
 
       tradeLog.push({
         type: 'BUY',
-        price,
+        price: price.toFixed(2),
         probUp: (probUp * 100).toFixed(1)
       });
     }
 
     /* ===== EQUITY ===== */
-
     equityCurve.push(equity);
 
     if (equity > peakEquity) peakEquity = equity;
@@ -112,37 +110,33 @@ async function backtest() {
   /* ===== RESULTS ===== */
 
   const winRate = trades > 0 ? (wins / trades) * 100 : 0;
-  const profitPct = ((equity / START_BALANCE - 1) * 100);
+  const totalReturn = (equity / START_BALANCE - 1) * 100;
 
   console.log('================ RESULTS ================');
   console.log(`Trades:           ${trades}`);
   console.log(`Win rate:         ${winRate.toFixed(2)} %`);
   console.log(`Final equity:     ${equity.toFixed(2)}`);
-  console.log(`Total return:     ${profitPct.toFixed(2)} %`);
+  console.log(`Total return:     ${totalReturn.toFixed(2)} %`);
   console.log(`Max drawdown:     ${(maxDrawdown * 100).toFixed(2)} %`);
   console.log('========================================');
 
-  /* ===== SAVE CSV ===== */
+  /* ===== SAVE FILES ===== */
 
-  const equityCsv =
+  fs.writeFileSync(
+    'equity_curve.csv',
     'step,equity\n' +
-    equityCurve.map((v, i) => `${i},${v.toFixed(2)}`).join('\n');
+      equityCurve.map((v, i) => `${i},${v.toFixed(2)}`).join('\n')
+  );
 
-  fs.writeFileSync('equity_curve.csv', equityCsv);
-
-  const tradesCsv =
+  fs.writeFileSync(
+    'trades.csv',
     'type,price,pnl,probUp\n' +
-    tradeLog
-      .map(t =>
-        `${t.type},${t.price},${t.pnl || ''},${t.probUp || ''}`
-      )
-      .join('\n');
+      tradeLog
+        .map(t => `${t.type},${t.price},${t.pnl || ''},${t.probUp || ''}`)
+        .join('\n')
+  );
 
-  fs.writeFileSync('trades.csv', tradesCsv);
-
-  console.log('\n📁 Файлы сохранены:');
-  console.log(' • equity_curve.csv  (для графика)');
-  console.log(' • trades.csv        (журнал сделок)');
+  console.log('\n📁 Сохранены файлы: equity_curve.csv, trades.csv');
 }
 
 backtest().catch(console.error);
