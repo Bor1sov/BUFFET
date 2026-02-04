@@ -161,3 +161,20 @@ EXIT
  маленький MAX_POSITION_RUB
 
  ты понимаешь, почему BUY
+
+
+ ШАГ 4.1 — DATASET
+
+Features:
+- ret1, ret5, ret10
+- distSMA20, distSMA50
+- vol10, vol20
+- atrNorm
+
+Target:
+- direction через N=5 свечей
+
+Проверка:
+- UP ratio ~ 45–55%
+- нет NaN
+- нет future leakage

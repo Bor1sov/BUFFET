@@ -1,48 +1,58 @@
-require('dotenv').config();
-const fs = require('fs');
-const { TinkoffInvestApi } = require('tinkoff-invest-api');
+import 'dotenv/config';
+import fs from 'fs';
+import pkg from 'tinkoff-invest-api';
+
+const { TinkoffInvestApi } = pkg;
 
 const api = new TinkoffInvestApi({
   token: process.env.TINKOFF_TOKEN,
-  isSandbox: process.env.SANDBOX === 'true',
+  sandbox: process.env.SANDBOX === 'true'
 });
 
 const FIGI = process.env.FIGI;
 
-(async () => {
-  try {
-    const to = new Date();
-    const from = new Date(to.getTime() - 24 * 60 * 60 * 1000); // 1 день
+// sandbox: максимум ~1 день для 1m
+const FROM = new Date(Date.now() - 24 * 60 * 60 * 1000);
+const TO = new Date();
 
-    const { candles } = await api.marketdata.getCandles({
-      figi: FIGI,
-      from,
-      to,
-      interval: 1, // ✅ 1 минута
-    });
+function toNumber(v) {
+  return v.units + v.nano * 1e-9;
+}
 
-    if (!Array.isArray(candles) || candles.length === 0) {
-      throw new Error('No candles received');
-    }
+async function main() {
+  console.log('📡 Loading candles...');
 
-    const csv = [
-      'time,open,high,low,close,volume',
-      ...candles.map(c => {
-        const price = q => q.units + q.nano / 1e9;
-        return [
-          c.time,
-          price(c.open),
-          price(c.high),
-          price(c.low),
-          price(c.close),
-          c.volume,
-        ].join(',');
-      }),
-    ].join('\n');
+  const res = await api.marketdata.getCandles({
+    figi: FIGI,
+    interval: 1, // ✅ 1 = 1 minute
+    from: FROM,
+    to: TO
+  });
 
-    fs.writeFileSync('data.csv', csv);
-    console.log(`✅ Saved ${candles.length} candles to data.csv`);
-  } catch (e) {
-    console.error('❌ Export failed:', e);
+  const candles = res.candles;
+
+  if (!candles || candles.length === 0) {
+    throw new Error('❌ No candles received');
   }
-})();
+
+  const rows = candles.map(c => [
+    c.time.toISOString(),
+    toNumber(c.open),
+    toNumber(c.high),
+    toNumber(c.low),
+    toNumber(c.close)
+  ]);
+
+  const csv =
+    'time,open,high,low,close\n' +
+    rows.map(r => r.join(',')).join('\n');
+
+  fs.writeFileSync('./price_series.csv', csv);
+
+  console.log('✅ price_series.csv saved');
+  console.log('Rows:', rows.length);
+}
+
+main().catch(err => {
+  console.error('❌', err);
+});
