@@ -1,0 +1,23 @@
+{
+  "name": "buffet",
+  "version": "1.0.0",
+  "main": "main.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "backtest": "node backtest_direction.js",
+    "train": "python plot_equity.py",
+    "start": "node bot.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "@grpc/grpc-js": "^1.14.3",
+    "@grpc/proto-loader": "^0.8.0",
+    "@tensorflow/tfjs": "^4.22.0",
+    "@tensorflow/tfjs-node": "^4.22.0",
+    "dotenv": "^17.2.3",
+    "tinkoff-invest-api": "^7.0.1"
+  }
+}
