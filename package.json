@@ -6,7 +6,8 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "backtest": "node backtest_direction.js",
     "train": "python plot_equity.py",
-    "start": "node bot.js"
+    "start": "node bot.js",
+    "trend": "node backtest_trend.js"
   },
   "keywords": [],
   "author": "",

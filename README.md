@@ -1,10 +1,9 @@
 # **СКРИПТЫ**
 
-
-   1) "test": "echo \"Error: no test specified\" && exit 1", **база**
-   2) "backtest": "node backtest_direction.js", **проверяет на исторических данных**
-   3) "train": "python plot_equity.py", **показывает график**
-   4) "start": "node bot.js"    **торгует**
+   1) `npm run backtest`: **проверяет на исторических данных**
+   2) `npm run train`: **показывает график**
+   3) `npm run start`: **торгует**
+   4) `npm run trend`: **проверяет тренд**
 
 
 
