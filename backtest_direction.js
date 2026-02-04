@@ -1,81 +1,77 @@
-const fs = require('fs');
-const { loadCSV } = require('./data');
-const { SMA, ATR } = require('./indicators');
-const { predictUpProb } = require('./model');
+// backtest_direction.js
+import fs from "fs";
+import { spawnSync } from "child_process";
 
-const candles = loadCSV('./data.csv');
-const closes = candles.map(c => c.close);
+const CONF_BUY = 0.55;
+const CONF_SELL = 0.45;
 
-let equity = 100000;
-let peak = equity;
-let maxDD = 0;
+const raw = fs.readFileSync("dataset.csv", "utf8").trim().split("\n");
+raw.shift();
 
-let position = null;
+const data = raw.map(r => {
+  const [
+    time,
+    close,
+    returns,
+    ema_fast,
+    ema_slow,
+    ema_diff,
+    volatility,
+    up
+  ] = r.split(",");
+
+  return {
+    time,
+    close: +close,
+    features: [
+      +returns,
+      +ema_fast,
+      +ema_slow,
+      +ema_diff,
+      +volatility
+    ]
+  };
+});
+
+let equity = 1.0;
+let position = 0;
+let entry = 0;
 let trades = [];
 
-let equityCurve = [];
-let bhCurve = [];
+for (let i = 0; i < data.length; i++) {
+  const f = data[i].features.join(",");
 
-const bhStart = candles[0].close;
+  const res = spawnSync(
+    "python",
+    ["predict_proba.py", f],
+    { encoding: "utf8" }
+  );
 
-for (let i = 50; i < candles.length; i++) {
-  const price = candles[i].close;
+  const pUp = parseFloat(res.stdout);
 
-  const sma20 = SMA(closes, 20, i);
-  const sma50 = SMA(closes, 50, i);
-  const atr = ATR(candles, 14, i);
-  const pUp = predictUpProb(candles, i);
-
-  // === ENTRY ===
-  if (!position && pUp > 0.55 && sma20 && sma50 && sma20 > sma50) {
-    position = {
-      entry: price,
-      stop: price - atr * 1.5
-    };
-    trades.push({ type: 'BUY', price, i });
+  if (position === 0 && pUp > CONF_BUY) {
+    position = 1;
+    entry = data[i].close;
   }
 
-  // === EXIT ===
-  if (position) {
-    if (price < position.stop || pUp < 0.45) {
-      const pnl = (price - position.entry) / position.entry;
-      equity *= 1 + pnl;
-      trades.push({ type: 'SELL', price, i, pnl });
-      position = null;
-    }
+  if (position === 1 && pUp < CONF_SELL) {
+    const pnl = (data[i].close - entry) / entry;
+    equity *= 1 + pnl;
+    trades.push(pnl);
+    position = 0;
   }
-
-  peak = Math.max(peak, equity);
-  maxDD = Math.min(maxDD, (equity - peak) / peak);
-
-  equityCurve.push({ i, equity });
-  bhCurve.push({ i, equity: 100000 * (price / bhStart) });
 }
 
-// === RESULTS ===
-const sells = trades.filter(t => t.type === 'SELL');
-const wins = sells.filter(t => t.pnl > 0);
+const wins = trades.filter(t => t > 0).length;
 
-console.log('\n============= RESULTS =============');
-console.log(`Trades:        ${sells.length}`);
-console.log(`Win rate:      ${(wins.length / (sells.length || 1) * 100).toFixed(2)}%`);
-console.log(`Strategy PnL:  ${((equity / 100000 - 1) * 100).toFixed(2)}%`);
-console.log(`Buy & Hold:    ${((bhCurve.at(-1).equity / 100000 - 1) * 100).toFixed(2)}%`);
-console.log(`Max drawdown:  ${(maxDD * 100).toFixed(2)}%`);
-console.log('==================================');
-
-// === SAVE CSV ===
-fs.writeFileSync('equity_curve.csv',
-  'i,equity\n' + equityCurve.map(r => `${r.i},${r.equity}`).join('\n')
+console.log("\n============= RESULTS =============");
+console.log("Trades:       ", trades.length);
+console.log(
+  "Win rate:     ",
+  trades.length ? ((wins / trades.length) * 100).toFixed(2) + "%" : "0%"
 );
-
-fs.writeFileSync('equity_bh.csv',
-  'i,equity\n' + bhCurve.map(r => `${r.i},${r.equity}`).join('\n')
+console.log(
+  "Strategy PnL: ",
+  ((equity - 1) * 100).toFixed(2) + "%"
 );
-
-fs.writeFileSync('trades.csv',
-  'i,type,price,pnl\n' +
-  trades.map(t => `${t.i},${t.type},${t.price},${t.pnl ?? ''}`).join('\n')
-);
-
-console.log('\n📁 CSV files saved');
+console.log("==================================");

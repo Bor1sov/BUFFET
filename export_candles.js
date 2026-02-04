@@ -1,58 +1,58 @@
-import 'dotenv/config';
-import fs from 'fs';
-import pkg from 'tinkoff-invest-api';
-
-const { TinkoffInvestApi } = pkg;
+require('dotenv').config();
+const fs = require('fs');
+const { TinkoffInvestApi } = require('tinkoff-invest-api');
 
 const api = new TinkoffInvestApi({
   token: process.env.TINKOFF_TOKEN,
-  sandbox: process.env.SANDBOX === 'true'
 });
 
 const FIGI = process.env.FIGI;
+const INTERVAL = 2; // 5 minutes
+const DAYS = 30;    // сколько дней грузим
 
-// sandbox: максимум ~1 день для 1m
-const FROM = new Date(Date.now() - 24 * 60 * 60 * 1000);
-const TO = new Date();
-
-function toNumber(v) {
-  return v.units + v.nano * 1e-9;
+function toISO(d) {
+  return d.toISOString();
 }
 
 async function main() {
-  console.log('📡 Loading candles...');
+  console.log('📡 Loading candles (5m)...');
 
-  const res = await api.marketdata.getCandles({
-    figi: FIGI,
-    interval: 1, // ✅ 1 = 1 minute
-    from: FROM,
-    to: TO
-  });
+  const now = new Date();
+  let all = [];
 
-  const candles = res.candles;
+  for (let i = DAYS; i > 0; i--) {
+    const from = new Date(now);
+    from.setDate(now.getDate() - i);
+    const to = new Date(from);
+    to.setDate(from.getDate() + 1);
 
-  if (!candles || candles.length === 0) {
-    throw new Error('❌ No candles received');
+    console.log(`⏳ ${from.toISOString().slice(0,10)} → ${to.toISOString().slice(0,10)}`);
+
+    const res = await api.marketdata.getCandles({
+      figi: FIGI,
+      from: toISO(from),
+      to: toISO(to),
+      interval: INTERVAL,
+    });
+
+    if (res.candles) all.push(...res.candles);
   }
 
-  const rows = candles.map(c => [
-    c.time.toISOString(),
-    toNumber(c.open),
-    toNumber(c.high),
-    toNumber(c.low),
-    toNumber(c.close)
-  ]);
+  const rows = ['time,open,high,low,close'];
 
-  const csv =
-    'time,open,high,low,close\n' +
-    rows.map(r => r.join(',')).join('\n');
+  for (const c of all) {
+    rows.push([
+      new Date(c.time).toISOString(),
+      c.open.units + c.open.nano / 1e9,
+      c.high.units + c.high.nano / 1e9,
+      c.low.units + c.low.nano / 1e9,
+      c.close.units + c.close.nano / 1e9,
+    ].join(','));
+  }
 
-  fs.writeFileSync('./price_series.csv', csv);
-
-  console.log('✅ price_series.csv saved');
-  console.log('Rows:', rows.length);
+  fs.writeFileSync('price_series.csv', rows.join('\n'));
+  console.log(`✅ price_series.csv saved`);
+  console.log(`Rows: ${all.length}`);
 }
 
-main().catch(err => {
-  console.error('❌', err);
-});
+main().catch(console.error);

@@ -1,132 +1,92 @@
 // build_dataset.js
-import fs from 'fs';
+import fs from "fs";
 
-const INPUT = './price_series.csv';
-const OUTPUT = './dataset.csv';
-const HORIZON = 5;
+const INPUT = "price_series.csv";
+const OUTPUT = "dataset.csv";
 
-// ===== HELPERS =====
-const mean = a => a.reduce((x, y) => x + y, 0) / a.length;
-const std = a => {
-  const m = mean(a);
-  return Math.sqrt(mean(a.map(x => (x - m) ** 2)));
-};
+// параметры
+const EMA_FAST = 5;
+const EMA_SLOW = 20;
+const VOL_WINDOW = 10;
 
-function SMA(v, p, i) {
-  if (i < p) return null;
-  return mean(v.slice(i - p, i));
-}
-
-function ATR(h, l, c, p, i) {
-  if (i < p) return null;
-  const trs = [];
-  for (let j = i - p + 1; j <= i; j++) {
-    trs.push(
-      Math.max(
-        h[j] - l[j],
-        Math.abs(h[j] - c[j - 1]),
-        Math.abs(l[j] - c[j - 1])
-      )
-    );
+function ema(values, period) {
+  const k = 2 / (period + 1);
+  let emaArr = [];
+  let prev = values[0];
+  for (let i = 0; i < values.length; i++) {
+    const cur = values[i] * k + prev * (1 - k);
+    emaArr.push(cur);
+    prev = cur;
   }
-  return mean(trs);
+  return emaArr;
 }
 
-// ===== LOAD CSV =====
-if (!fs.existsSync(INPUT)) {
-  throw new Error(`❌ File not found: ${INPUT}`);
+// ---------- load candles ----------
+const raw = fs.readFileSync(INPUT, "utf8").trim().split("\n");
+const header = raw.shift();
+const rows = raw.map(r => r.split(","));
+
+const candles = rows.map(r => ({
+  time: r[0],
+  open: +r[1],
+  high: +r[2],
+  low: +r[3],
+  close: +r[4],
+}));
+
+console.log("Loaded candles:", candles.length);
+
+// ---------- features ----------
+const closes = candles.map(c => c.close);
+const emaFast = ema(closes, EMA_FAST);
+const emaSlow = ema(closes, EMA_SLOW);
+
+let dataset = [];
+
+for (let i = VOL_WINDOW + EMA_SLOW; i < candles.length - 1; i++) {
+  const returns = (closes[i] - closes[i - 1]) / closes[i - 1];
+
+  const volSlice = closes.slice(i - VOL_WINDOW, i);
+  const mean = volSlice.reduce((a, b) => a + b, 0) / volSlice.length;
+  const variance =
+    volSlice.reduce((s, v) => s + (v - mean) ** 2, 0) / volSlice.length;
+  const volatility = Math.sqrt(variance);
+
+  const up = closes[i + 1] > closes[i] ? 1 : 0;
+
+  dataset.push({
+    time: candles[i].time,
+    close: closes[i],
+    returns,
+    ema_fast: emaFast[i],
+    ema_slow: emaSlow[i],
+    ema_diff: emaFast[i] - emaSlow[i],
+    volatility,
+    up,
+  });
 }
 
-const raw = fs.readFileSync(INPUT, 'utf8').trim().split('\n');
-console.log('Header:', raw[0]);
-console.log('Sample row:', raw[1]);
+// ---------- save ----------
+const outHeader =
+  "time,close,returns,ema_fast,ema_slow,ema_diff,volatility,up";
+const outRows = dataset.map(d =>
+  [
+    d.time,
+    d.close,
+    d.returns,
+    d.ema_fast,
+    d.ema_slow,
+    d.ema_diff,
+    d.volatility,
+    d.up,
+  ].join(",")
+);
 
-const delimiter = raw[0].includes(';') ? ';' : ',';
-console.log('Detected delimiter:', delimiter);
+fs.writeFileSync(OUTPUT, [outHeader, ...outRows].join("\n"));
 
-raw.shift(); // header
+const upRatio =
+  dataset.filter(d => d.up === 1).length / dataset.length;
 
-const data = raw
-  .map(r => {
-    const parts = r.split(delimiter);
-    if (parts.length < 5) return null;
-
-    const [time, open, high, low, close] = parts;
-
-    return {
-      time: Date.parse(time),
-      open: +open,
-      high: +high,
-      low: +low,
-      close: +close
-    };
-  })
-  .filter(
-    d =>
-      d &&
-      Number.isFinite(d.time) &&
-      Number.isFinite(d.open) &&
-      Number.isFinite(d.high) &&
-      Number.isFinite(d.low) &&
-      Number.isFinite(d.close)
-  );
-
-console.log(`Loaded candles: ${data.length}`);
-
-if (data.length < 200) {
-  throw new Error('❌ Too few candles for dataset');
-}
-
-// ===== FEATURES =====
-const c = data.map(d => d.close);
-const h = data.map(d => d.high);
-const l = data.map(d => d.low);
-
-const rows = [];
-
-for (let i = 60; i < data.length - HORIZON; i++) {
-  const ret1 = c[i] / c[i - 1] - 1;
-  const ret5 = c[i] / c[i - 5] - 1;
-  const ret10 = c[i] / c[i - 10] - 1;
-
-  const sma20 = SMA(c, 20, i);
-  const sma50 = SMA(c, 50, i);
-  if (!sma20 || !sma50) continue;
-
-  const vol10 = std(c.slice(i - 10, i));
-  const vol20 = std(c.slice(i - 20, i));
-
-  const atr14 = ATR(h, l, c, 14, i);
-  if (!atr14) continue;
-
-  const target = c[i + HORIZON] > c[i] ? 1 : 0;
-
-  rows.push([
-    ret1,
-    ret5,
-    ret10,
-    (c[i] - sma20) / sma20,
-    (c[i] - sma50) / sma50,
-    vol10,
-    vol20,
-    atr14 / c[i],
-    target
-  ]);
-}
-
-// ===== SAVE =====
-if (!rows.length) {
-  throw new Error('❌ Dataset is empty');
-}
-
-const out =
-  'ret1,ret5,ret10,distSMA20,distSMA50,vol10,vol20,atrNorm,target\n' +
-  rows.map(r => r.join(',')).join('\n');
-
-fs.writeFileSync(OUTPUT, out);
-
-const up = rows.reduce((a, r) => a + r.at(-1), 0) / rows.length;
-
-console.log(`✅ Dataset saved: ${OUTPUT}`);
-console.log(`Rows: ${rows.length}`);
-console.log(`UP ratio: ${(up * 100).toFixed(2)}%`);
+console.log("✅ Dataset saved:", OUTPUT);
+console.log("Rows:", dataset.length);
+console.log("UP ratio:", (upRatio * 100).toFixed(2) + "%");
