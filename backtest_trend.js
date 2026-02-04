@@ -4,14 +4,15 @@ const fs = require('fs');
 const { getCandles } = require('./data');
 const { trainModel, predict } = require('./ml');
 
-/* ================== SETTINGS ================== */
+/* ================= SETTINGS ================= */
 
 const FIGI = process.env.FIGI;
 const DAYS = 60;
 const WINDOW = 60;
 
-const BUY_PROB = 0.6;
-const EXIT_PROB = 0.45;
+/* ↓↓↓ СМЯГЧЁННЫЕ ПОРОГИ ↓↓↓ */
+const BUY_PROB = 0.55;
+const EXIT_PROB = 0.48;
 
 /* Stop-loss */
 const STOP_MODE = 'ATR'; // 'ATR' | 'PERCENT'
@@ -22,7 +23,7 @@ const ATR_MULTIPLIER = 2;
 /* Capital */
 const START_BALANCE = 100000;
 
-/* ================== UTILS ================== */
+/* ================= UTILS ================= */
 
 function sma(arr, period, i) {
   if (i < period) return null;
@@ -43,10 +44,10 @@ function atr(candles, period, i) {
   return sum / period;
 }
 
-/* ================== BACKTEST ================== */
+/* ================= BACKTEST ================= */
 
 async function run() {
-  console.log('\n📊 BACKTEST: STRATEGY vs BUY & HOLD\n');
+  console.log('\n📊 BACKTEST: TREND + ML + STOP + B&H\n');
 
   const candles = await getCandles(FIGI, DAYS);
   const prices = candles.map(c => c.close);
@@ -84,7 +85,7 @@ async function run() {
 
     priceSeries.push({ step, price });
 
-    /* Buy & Hold equity */
+    /* Buy & Hold */
     equityBH = START_BALANCE * (price / bhEntry);
     equityBHCurve.push(equityBH);
 
@@ -96,7 +97,14 @@ async function run() {
     const recent = prices.slice(i - WINDOW, i);
     const probUp = await predict(model, recent);
 
-    /* STOP-LOSS */
+    /* ---- LOG SIGNALS ---- */
+    if (trendUp) {
+      console.log(
+        `step=${step} price=${price.toFixed(2)} P(UP)=${(probUp * 100).toFixed(1)}%`
+      );
+    }
+
+    /* STOP */
     if (inPos && price <= stopPrice) {
       const pnl = stopPrice / entry - 1;
       equity *= 1 + pnl;
@@ -173,11 +181,7 @@ async function run() {
     'type,step,price\n' + tradeLog.map(t => `${t.type},${t.step},${t.price}`).join('\n')
   );
 
-  console.log('📁 Saved files:');
-  console.log(' - price_series.csv');
-  console.log(' - equity_curve.csv');
-  console.log(' - equity_bh.csv');
-  console.log(' - trades.csv');
+  console.log('📁 CSV files saved');
 }
 
 run().catch(console.error);

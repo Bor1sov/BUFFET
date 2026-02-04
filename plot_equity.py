@@ -1,40 +1,35 @@
-import os
 import pandas as pd
 import matplotlib.pyplot as plt
 
-# ===== PATH FIX =====
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-CSV_PATH = os.path.join(BASE_DIR, 'equity_curve.csv')
+price = pd.read_csv('price_series.csv', header=None, names=['price'])
+equity = pd.read_csv('equity_curve.csv', header=None, names=['equity'])
+bh = pd.read_csv('equity_bh.csv', header=None, names=['bh'])
+trades = pd.read_csv('trades.csv', header=None, names=['i','price','type','ret'])
 
-# ===== LOAD DATA =====
-df = pd.read_csv(CSV_PATH)
+price['sma20'] = price['price'].rolling(20).mean()
+price['sma50'] = price['price'].rolling(50).mean()
 
-# ===== METRICS =====
-start_equity = df['equity'].iloc[0]
-end_equity = df['equity'].iloc[-1]
-total_return = (end_equity / start_equity - 1) * 100
+plt.figure(figsize=(14, 8))
 
-rolling_max = df['equity'].cummax()
-drawdown = (rolling_max - df['equity']) / rolling_max
-max_dd = drawdown.max() * 100
+plt.subplot(2, 1, 1)
+plt.plot(price['price'], label='Price')
+plt.plot(price['sma20'], label='SMA20')
+plt.plot(price['sma50'], label='SMA50')
 
-# ===== PLOT =====
-plt.figure(figsize=(12, 6))
-plt.plot(df['equity'], label='Equity Curve', linewidth=2)
-plt.fill_between(
-    df.index,
-    df['equity'],
-    rolling_max,
-    alpha=0.2,
-    label='Drawdown'
-)
+for _, t in trades.iterrows():
+    if t['type'] == 'BUY':
+        plt.scatter(t['i'], t['price'], color='green')
+    else:
+        plt.scatter(t['i'], t['price'], color='red')
 
-plt.title(
-    f'Equity Curve | Return: {total_return:.2f}% | Max DD: {max_dd:.2f}%'
-)
-plt.xlabel('Step')
-plt.ylabel('Equity')
-plt.grid(True)
 plt.legend()
+plt.title('Price + SMA + Trades')
+
+plt.subplot(2, 1, 2)
+plt.plot(equity['equity'], label='Strategy')
+plt.plot(bh['bh'], label='Buy & Hold')
+plt.legend()
+plt.title('Equity Curve')
+
 plt.tight_layout()
 plt.show()

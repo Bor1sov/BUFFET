@@ -1,142 +1,81 @@
-require('dotenv').config();
 const fs = require('fs');
+const { loadCSV } = require('./data');
+const { SMA, ATR } = require('./indicators');
+const { predictUpProb } = require('./model');
 
-const { getCandles, normalize } = require('./data');
-const { trainModel, predict } = require('./ml');
+const candles = loadCSV('./data.csv');
+const closes = candles.map(c => c.close);
 
-/* ================= НАСТРОЙКИ ================= */
+let equity = 100000;
+let peak = equity;
+let maxDD = 0;
 
-const FIGI = process.env.FIGI;
-const WINDOW_SIZE = 60;
-const DAYS = 30;
+let position = null;
+let trades = [];
 
-const BUY_PROB = 0.55;
-const SELL_PROB = 0.48;
+let equityCurve = [];
+let bhCurve = [];
 
-const START_BALANCE = 100000;
+const bhStart = candles[0].close;
 
-/* ================= BACKTEST ================= */
+for (let i = 50; i < candles.length; i++) {
+  const price = candles[i].close;
 
-async function backtest() {
-  console.log('📊 BACKTEST DIRECTIONAL MODEL\n');
+  const sma20 = SMA(closes, 20, i);
+  const sma50 = SMA(closes, 50, i);
+  const atr = ATR(candles, 14, i);
+  const pUp = predictUpProb(candles, i);
 
-  const candles = await getCandles(FIGI, DAYS);
-  const prices = candles.map(c => c.close);
-
-  if (prices.length < WINDOW_SIZE + 10) {
-    console.log('❌ Недостаточно данных');
-    return;
+  // === ENTRY ===
+  if (!position && pUp > 0.55 && sma20 && sma50 && sma20 > sma50) {
+    position = {
+      entry: price,
+      stop: price - atr * 1.5
+    };
+    trades.push({ type: 'BUY', price, i });
   }
 
-  /* ===== NORMALIZE ===== */
-
-  const min = Math.min(...prices);
-  const max = Math.max(...prices);
-  const normPrices = normalize(prices, min, max);
-
-  /* ===== TRAIN ===== */
-
-  console.log('🧠 Начало обучения (UP/DOWN)...');
-  const model = await trainModel(normPrices, WINDOW_SIZE);
-  console.log('Обучение завершено');
-
-  /* ===== STATE ===== */
-
-  let equity = START_BALANCE;
-  let peakEquity = START_BALANCE;
-  let maxDrawdown = 0;
-
-  let inPosition = false;
-  let entryPrice = 0;
-
-  let trades = 0;
-  let wins = 0;
-  let losses = 0;
-
-  const equityCurve = [];
-  const tradeLog = [];
-
-  /* ===== SIMULATION ===== */
-
-  for (let i = WINDOW_SIZE; i < prices.length - 1; i++) {
-    const price = prices[i];
-    const recent = normPrices.slice(i - WINDOW_SIZE, i);
-
-    // ✅ ВСЕГДА СНАЧАЛА
-    const probUp = await predict(model, recent);
-
-    // Диагностика распределения
-    if (i % 100 === 0) {
-      console.log(`P(UP)=${(probUp * 100).toFixed(1)}%`);
-    }
-
-    /* ===== EXIT ===== */
-    if (inPosition && probUp < SELL_PROB) {
-      const pnl = price / entryPrice - 1;
+  // === EXIT ===
+  if (position) {
+    if (price < position.stop || pUp < 0.45) {
+      const pnl = (price - position.entry) / position.entry;
       equity *= 1 + pnl;
-
-      trades++;
-      pnl > 0 ? wins++ : losses++;
-
-      tradeLog.push({
-        type: 'SELL',
-        price: price.toFixed(2),
-        pnl: (pnl * 100).toFixed(2)
-      });
-
-      inPosition = false;
+      trades.push({ type: 'SELL', price, i, pnl });
+      position = null;
     }
-
-    /* ===== ENTRY ===== */
-    if (!inPosition && probUp > BUY_PROB) {
-      entryPrice = price;
-      inPosition = true;
-
-      tradeLog.push({
-        type: 'BUY',
-        price: price.toFixed(2),
-        probUp: (probUp * 100).toFixed(1)
-      });
-    }
-
-    /* ===== EQUITY ===== */
-    equityCurve.push(equity);
-
-    if (equity > peakEquity) peakEquity = equity;
-    const dd = (peakEquity - equity) / peakEquity;
-    if (dd > maxDrawdown) maxDrawdown = dd;
   }
 
-  /* ===== RESULTS ===== */
+  peak = Math.max(peak, equity);
+  maxDD = Math.min(maxDD, (equity - peak) / peak);
 
-  const winRate = trades > 0 ? (wins / trades) * 100 : 0;
-  const totalReturn = (equity / START_BALANCE - 1) * 100;
-
-  console.log('================ RESULTS ================');
-  console.log(`Trades:           ${trades}`);
-  console.log(`Win rate:         ${winRate.toFixed(2)} %`);
-  console.log(`Final equity:     ${equity.toFixed(2)}`);
-  console.log(`Total return:     ${totalReturn.toFixed(2)} %`);
-  console.log(`Max drawdown:     ${(maxDrawdown * 100).toFixed(2)} %`);
-  console.log('========================================');
-
-  /* ===== SAVE FILES ===== */
-
-  fs.writeFileSync(
-    'equity_curve.csv',
-    'step,equity\n' +
-      equityCurve.map((v, i) => `${i},${v.toFixed(2)}`).join('\n')
-  );
-
-  fs.writeFileSync(
-    'trades.csv',
-    'type,price,pnl,probUp\n' +
-      tradeLog
-        .map(t => `${t.type},${t.price},${t.pnl || ''},${t.probUp || ''}`)
-        .join('\n')
-  );
-
-  console.log('\n📁 Сохранены файлы: equity_curve.csv, trades.csv');
+  equityCurve.push({ i, equity });
+  bhCurve.push({ i, equity: 100000 * (price / bhStart) });
 }
 
-backtest().catch(console.error);
+// === RESULTS ===
+const sells = trades.filter(t => t.type === 'SELL');
+const wins = sells.filter(t => t.pnl > 0);
+
+console.log('\n============= RESULTS =============');
+console.log(`Trades:        ${sells.length}`);
+console.log(`Win rate:      ${(wins.length / (sells.length || 1) * 100).toFixed(2)}%`);
+console.log(`Strategy PnL:  ${((equity / 100000 - 1) * 100).toFixed(2)}%`);
+console.log(`Buy & Hold:    ${((bhCurve.at(-1).equity / 100000 - 1) * 100).toFixed(2)}%`);
+console.log(`Max drawdown:  ${(maxDD * 100).toFixed(2)}%`);
+console.log('==================================');
+
+// === SAVE CSV ===
+fs.writeFileSync('equity_curve.csv',
+  'i,equity\n' + equityCurve.map(r => `${r.i},${r.equity}`).join('\n')
+);
+
+fs.writeFileSync('equity_bh.csv',
+  'i,equity\n' + bhCurve.map(r => `${r.i},${r.equity}`).join('\n')
+);
+
+fs.writeFileSync('trades.csv',
+  'i,type,price,pnl\n' +
+  trades.map(t => `${t.i},${t.type},${t.price},${t.pnl ?? ''}`).join('\n')
+);
+
+console.log('\n📁 CSV files saved');

@@ -4,6 +4,8 @@
    2) `npm run train`: **показывает график**
    3) `npm run start`: **торгует**
    4) `npm run trend`: **проверяет тренд**
+   5) `npm run optimize`: **оптимизирует стратегию**
+   6) `npm run oos`: **Показывает OOS**
 
 
 
