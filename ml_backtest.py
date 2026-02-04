@@ -1,127 +1,94 @@
-# ml_backtest.py
-
 import pandas as pd
 import numpy as np
 import joblib
 
-# ================== НАСТРОЙКИ ==================
-CONFIDENCE = 0.65
-HOLD = 5
-
-STOP = 0.003      # -0.3%
-TAKE = 0.006      # +0.6%
-FEE = 0.0004
-
-FEATURES = [
-    "returns",
-    "ema_fast",
-    "ema_slow",
-    "ema_diff",
-    "volatility"
-]
-
-# ================== LOAD ==================
-df = pd.read_csv("dataset.csv")
+# ===== PARAMS =====
+CONF = 0.55
+DEV = 0.002
+HOLD = 15
+SL = 0.003
+# ==================
 
 model = joblib.load("model.pkl")
 scaler = joblib.load("scaler.pkl")
 
-X = scaler.transform(df[FEATURES])
+df = pd.read_csv("dataset.csv")
+df.reset_index(drop=True, inplace=True)
+
+price = df["close"].values
+
+# ===== FEATURES (строго как при обучении) =====
+FEATURE_COLS = list(scaler.feature_names_in_)
+X = scaler.transform(df[FEATURE_COLS])
 proba = model.predict_proba(X)[:, 1]
 
-trend = df["ema_fast"] > df["ema_slow"]
+# ===== INDICATORS =====
+df["sma50"] = df["close"].rolling(50).mean()
+df["dev"] = (df["close"] - df["sma50"]) / df["sma50"]
 
-print("Prob mean:", proba.mean())
-print("Prob std: ", proba.std())
-print("Prob min/max:", proba.min(), proba.max())
+# ===== BACKTEST =====
+equity = [1.0]
+pos = 0
+entry_price = 0
+bars = 0
+trades = []
 
-# ================== BACKTEST ==================
-equity = 1.0
-equity_curve = []
-trades_log = []
+for i in range(50, len(df)):
+    eq = equity[-1]
 
-in_position = False
-entry_price = None
-entry_time = None
-entry_idx = None
+    if pos == 0:
+        # LONG mean reversion
+        if df["dev"].iloc[i] < -DEV and proba[i] > CONF:
+            pos = 1
+            entry_price = price[i]
+            entry_sma = df["sma50"].iloc[i]
+            bars = 0
 
-for i in range(len(df) - HOLD):
+        # SHORT mean reversion
+        elif df["dev"].iloc[i] > DEV and proba[i] < (1 - CONF):
+            pos = -1
+            entry_price = price[i]
+            entry_sma = df["sma50"].iloc[i]
+            bars = 0
 
-    time = df.iloc[i]["time"] if "time" in df.columns else i
-    price = df.iloc[i]["close"]
+        equity.append(eq)
+        continue
 
-    # ====== ENTRY ======
-    if not in_position:
-        if proba[i] > CONFIDENCE and trend.iloc[i]:
-            in_position = True
-            entry_price = price
-            entry_time = time
-            entry_idx = i
-            hold_count = 0
+    bars += 1
+    ret = (price[i] - entry_price) / entry_price * pos
 
-    # ====== POSITION ======
-    if in_position:
-        hold_count += 1
-        move = (price - entry_price) / entry_price
+    # ===== EXIT CONDITIONS =====
+    exit_sma = (
+        pos == 1 and price[i] >= df["sma50"].iloc[i]
+    ) or (
+        pos == -1 and price[i] <= df["sma50"].iloc[i]
+    )
 
-        exit_reason = None
+    exit_trade = (
+        ret <= -SL or
+        exit_sma or
+        bars >= HOLD
+    )
 
-        if move <= -STOP:
-            exit_reason = "stop"
-        elif move >= TAKE:
-            exit_reason = "take"
-        elif hold_count >= HOLD:
-            exit_reason = "time"
+    if exit_trade:
+        eq *= (1 + ret)
+        trades.append(ret)
+        pos = 0
 
-        if exit_reason:
-            ret = move - FEE
-            equity *= (1 + ret)
+    equity.append(eq)
 
-            trades_log.append({
-                "entryTime": entry_time,
-                "exitTime": time,
-                "entry": entry_price,
-                "exit": price,
-                "return": ret,
-                "reason": exit_reason
-            })
+# ===== RESULTS =====
+equity = np.array(equity)
+bh = price / price[0]
 
-            in_position = False
-            entry_price = None
-            entry_time = None
-            entry_idx = None
+print("\n============= MEAN REVERSION + ML (TP = SMA) =============")
+print(f"Trades:        {len(trades)}")
+print(f"Win rate:      {np.mean(np.array(trades) > 0) * 100:.2f}%")
+print(f"Strategy PnL:  {(equity[-1] - 1) * 100:.2f}%")
+print("=========================================================")
 
-    equity_curve.append({
-        "time": time,
-        "equity": equity
-    })
-
-# ================== SAVE ==================
-pd.DataFrame(equity_curve).to_csv("equity_curve.csv", index=False)
-pd.DataFrame(trades_log).to_csv("trades.csv", index=False)
-
-# BUY & HOLD
-bh_equity = []
-start_price = df.iloc[0]["close"]
-
-for i in range(len(df)):
-    time = df.iloc[i]["time"] if "time" in df.columns else i
-    bh_equity.append({
-        "time": time,
-        "equity": df.iloc[i]["close"] / start_price
-    })
-
-pd.DataFrame(bh_equity).to_csv("equity_bh.csv", index=False)
-
-# PRICE SERIES
-df[["time", "close"]].to_csv("price_series.csv", index=False)
-
-# ================== RESULTS ==================
-trades = len(trades_log)
-wins = sum(1 for t in trades_log if t["return"] > 0)
-
-print("\n============= ML RESULTS =============")
-print("Trades:       ", trades)
-print("Win rate:     ", f"{wins / trades * 100:.2f}%" if trades else "0%")
-print("Strategy PnL: ", f"{(equity - 1) * 100:.2f}%")
-print("=====================================")
+# ===== SAVE EQUITY =====
+pd.DataFrame({
+    "equity": equity[:len(price)],
+    "buy_hold": bh[:len(equity)]
+}).to_csv("equity_curve.csv", index=False)
