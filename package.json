@@ -1,0 +1,24 @@
+{
+  "name": "buffet",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "main.js",
+  "scripts": {
+    "backtest": "node backtest_direction.js",
+    "train": "python train_model.py",
+    "start": "node bot.js",
+    "trend": "node backtest_trend.js",
+    "oos": "node backtest_oos.js",
+    "optimize": "node optimize_trend.js"
+  },
+  "dependencies": {
+    "@grpc/grpc-js": "^1.14.3",
+    "@grpc/proto-loader": "^0.8.0",
+    "@tensorflow/tfjs": "^4.22.0",
+    "@tensorflow/tfjs-node": "^4.22.0",
+    "@tinkoff/invest-openapi-js-sdk": "^1.5.0",
+    "dotenv": "^17.2.3",
+    "node-fetch": "^2.7.0",
+    "tinkoff-invest-api": "^7.0.1"
+  }
+}
